@@ -3,35 +3,34 @@ package main
 import (
 	"log"
 	"net/http"
-	"sync"
 
-	"RestApi/handlers" // Adjust the import path based on your project structure
+	"RestApi/handlers"
 	"RestApi/model"
 
 	"github.com/gorilla/mux"
 )
 
-// Initialize and set up the HTTP server
 func main() {
-	// Create the initial AppState with an empty book list and a mutex
-	appState := &model.AppState{
-		Books:     sync.Mutex{},
-		BooksList: []model.Book{}, // Start with an empty book list
+	// Initialize the AppState with SQLite database
+	appState, err := model.NewAppState("books.db")
+	if err != nil {
+		log.Fatalf("Failed to initialize app state: %v", err)
 	}
 
-	// Initialize the router
-	router := mux.NewRouter()
+	// Close the database connection when the program exits
+	defer appState.DB.Close()
 
-	// Set up the routes and link to handlers, passing AppState
-	router.HandleFunc("/books", handlers.GetBooks(appState)).Methods("GET")
-	router.HandleFunc("/books/{id}", handlers.GetBook(appState)).Methods("GET")
-	router.HandleFunc("/books", handlers.CreateBook(appState)).Methods("POST")
-	router.HandleFunc("/books/{id}", handlers.UpdateBook(appState)).Methods("PUT")
-	router.HandleFunc("/books/{id}", handlers.DeleteBook(appState)).Methods("DELETE")
+	// Set up the router
+	r := mux.NewRouter()
+
+	// Define your routes (CRUD operations)
+	r.HandleFunc("/books", handlers.GetBooks(appState)).Methods("GET")           // Get all books
+	r.HandleFunc("/books/{id}", handlers.GetBook(appState)).Methods("GET")       // Get a specific book by ID
+	r.HandleFunc("/books", handlers.CreateBook(appState)).Methods("POST")        // Create a new book
+	r.HandleFunc("/books/{id}", handlers.UpdateBook(appState)).Methods("PUT")    // Update a book by ID
+	r.HandleFunc("/books/{id}", handlers.DeleteBook(appState)).Methods("DELETE") // Delete a book by ID
 
 	// Start the HTTP server
-	log.Println("Server running on http://127.0.0.1:8080")
-	if err := http.ListenAndServe("127.0.0.1:8080", router); err != nil {
-		log.Fatal("Server failed to start:", err)
-	}
+	log.Println("Server started on :8080")
+	log.Fatal(http.ListenAndServe(":8080", r))
 }

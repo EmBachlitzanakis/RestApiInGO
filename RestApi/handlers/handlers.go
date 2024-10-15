@@ -11,14 +11,33 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// GetBooks handler to fetch all books
+// GetBooks handler to fetch all books from the SQLite database
 func GetBooks(appState *model.AppState) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		appState.Books.Lock()
-		defer appState.Books.Unlock()
+		// Query all books from the database
+		rows, err := appState.DB.Query("SELECT id, title, author FROM books")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Error querying books: %v", err)
+			return
+		}
+		defer rows.Close()
+
+		var books []model.Book
+
+		for rows.Next() {
+			var book model.Book
+			err := rows.Scan(&book.ID, &book.Title, &book.Author)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "Error scanning books: %v", err)
+				return
+			}
+			books = append(books, book)
+		}
 
 		// Encode and return the list of books
-		err := json.NewEncoder(w).Encode(appState.BooksList)
+		err = json.NewEncoder(w).Encode(books)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Error encoding books: %v", err)
@@ -28,62 +47,50 @@ func GetBooks(appState *model.AppState) http.HandlerFunc {
 	}
 }
 
-// GetBook is an HTTP handler that fetches a book by ID.
-func GetBook(appState *model.AppState) http.HandlerFunc {
+// CreateBook handler to add a new book to the SQLite database
+func CreateBook(appState *model.AppState) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		id, err := uuid.Parse(vars["id"])
+		var book model.Book
+
+		err := json.NewDecoder(r.Body).Decode(&book)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "Invalid book ID: %v", err)
+			fmt.Fprintf(w, "Error decoding book: %v", err)
 			return
 		}
 
-		appState.Books.Lock()
-		defer appState.Books.Unlock()
+		book.ID = uuid.New().String()
 
-		var book *model.Book
-		for _, b := range appState.BooksList {
-			if b.ID == id {
-				book = &b
-				break
-			}
-		}
-		if book == nil {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, "Book not found")
-			return
-		}
-
-		err = json.NewEncoder(w).Encode(book)
+		_, err = appState.DB.Exec("INSERT INTO books (id, title, author) VALUES (?, ?, ?)", book.ID, book.Title, book.Author)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, "Error encoding book: %v", err)
+			fmt.Fprintf(w, "Error inserting book: %v", err)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(book)
 	}
 }
 
-// CreateBook creates a new book (POST /books)
-func CreateBook(appState *model.AppState) http.HandlerFunc {
+// GetBook handler to fetch a single book by ID
+func GetBook(appState *model.AppState) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var newBook model.Book
-		err := json.NewDecoder(r.Body).Decode(&newBook)
+		vars := mux.Vars(r)
+		bookID := vars["id"]
+
+		row := appState.DB.QueryRow("SELECT id, title, author FROM books WHERE id = ?", bookID)
+
+		var book model.Book
+		err := row.Scan(&book.ID, &book.Title, &book.Author)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Invalid request payload"))
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, "Book not found: %v", err)
 			return
 		}
 
-		appState.Books.Lock()
-		defer appState.Books.Unlock()
-
-		newBook.ID = uuid.New()
-		appState.BooksList = append(appState.BooksList, newBook)
-
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(newBook)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(book)
 	}
 }
 
@@ -91,37 +98,43 @@ func CreateBook(appState *model.AppState) http.HandlerFunc {
 func UpdateBook(appState *model.AppState) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		bookID, err := uuid.Parse(vars["id"])
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Invalid book ID"))
-			return
-		}
+		bookID := vars["id"]
 
 		var updatedBook model.Book
-		err = json.NewDecoder(r.Body).Decode(&updatedBook)
+		err := json.NewDecoder(r.Body).Decode(&updatedBook)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte("Invalid request payload"))
 			return
 		}
 
-		appState.Books.Lock()
-		defer appState.Books.Unlock()
+		updatedBook.ID = bookID
 
-		for i, book := range appState.BooksList {
-			if book.ID == bookID {
-				appState.BooksList[i].Title = updatedBook.Title
-				appState.BooksList[i].Author = updatedBook.Author
-
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(appState.BooksList[i])
-				return
-			}
+		_, err = appState.DB.Exec(
+			"UPDATE books SET title = ?, author = ? WHERE id = ?",
+			updatedBook.Title, updatedBook.Author, bookID,
+		)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Error updating book: %v", err)
+			return
 		}
 
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Book not found"))
+		result, err := appState.DB.Exec("SELECT changes()")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Error checking update result"))
+			return
+		}
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("Book not found"))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(updatedBook)
 	}
 }
 
@@ -129,26 +142,28 @@ func UpdateBook(appState *model.AppState) http.HandlerFunc {
 func DeleteBook(appState *model.AppState) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		bookID, err := uuid.Parse(vars["id"])
+		bookID := vars["id"]
+
+		result, err := appState.DB.Exec("DELETE FROM books WHERE id = ?", bookID)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Invalid book ID"))
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Error deleting book: %v", err)
 			return
 		}
 
-		appState.Books.Lock()
-		defer appState.Books.Unlock()
-
-		for i, book := range appState.BooksList {
-			if book.ID == bookID {
-				appState.BooksList = append(appState.BooksList[:i], appState.BooksList[i+1:]...)
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("Book deleted"))
-				return
-			}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Error checking delete result"))
+			return
+		}
+		if rowsAffected == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("Book not found"))
+			return
 		}
 
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Book not found"))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Book deleted"))
 	}
 }

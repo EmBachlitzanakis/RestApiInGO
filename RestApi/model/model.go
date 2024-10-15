@@ -1,18 +1,40 @@
 package model
 
 import (
-	"sync"
+	"database/sql"
 
-	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
 type Book struct {
-	ID     uuid.UUID `json:"id"`
-	Title  string    `json:"title"`
-	Author string    `json:"author"`
+	ID     string `json:"id"` // Use string for easier storage in SQLite
+	Title  string `json:"title"`
+	Author string `json:"author"`
 }
 
 type AppState struct {
-	Books     sync.Mutex
-	BooksList []Book
+	DB *sql.DB // SQLite database connection
+}
+
+// Initialize the AppState and create the books table if it doesn't exist
+func NewAppState(dbPath string) (*AppState, error) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create table if it doesn't exist
+	createTableQuery := `
+	CREATE TABLE IF NOT EXISTS books (
+		id TEXT PRIMARY KEY,
+		title TEXT,
+		author TEXT
+	);`
+
+	_, err = db.Exec(createTableQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	return &AppState{DB: db}, nil
 }
