@@ -12,12 +12,12 @@ type Book struct {
 	Author string `json:"author"`
 }
 
-type AppState struct {
+type Server struct {
 	DB *sql.DB // SQLite database connection
 }
 
 // Initialize the AppState and create the books table if it doesn't exist
-func NewAppState(dbPath string) (*AppState, error) {
+func NewServer(dbPath string) (*Server, error) {
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, err
@@ -36,5 +36,5 @@ func NewAppState(dbPath string) (*AppState, error) {
 		return nil, err
 	}
 
-	return &AppState{DB: db}, nil
+	return &Server{DB: db}, nil
 }

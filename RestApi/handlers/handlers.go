@@ -12,11 +12,11 @@ import (
 )
 
 // GetBooks handler to fetch all books from the SQLite database
-func GetBooks(appState *model.AppState) http.HandlerFunc {
+func GetBooks(server *model.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		// Query all books from the database
-		rows, err := appState.DB.QueryContext(ctx, "SELECT id, title, author FROM books")
+		rows, err := server.DB.QueryContext(ctx, "SELECT id, title, author FROM books")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Error querying books: %v", err)
@@ -49,7 +49,7 @@ func GetBooks(appState *model.AppState) http.HandlerFunc {
 }
 
 // CreateBook handler to add a new book to the SQLite database
-func CreateBook(appState *model.AppState) http.HandlerFunc {
+func CreateBook(server *model.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		var book model.Book
@@ -63,7 +63,7 @@ func CreateBook(appState *model.AppState) http.HandlerFunc {
 
 		book.ID = uuid.New().String()
 
-		_, err = appState.DB.ExecContext(ctx, "INSERT INTO books (id, title, author) VALUES (?, ?, ?)", book.ID, book.Title, book.Author)
+		_, err = server.DB.ExecContext(ctx, "INSERT INTO books (id, title, author) VALUES (?, ?, ?)", book.ID, book.Title, book.Author)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Error inserting book: %v", err)
@@ -76,13 +76,13 @@ func CreateBook(appState *model.AppState) http.HandlerFunc {
 }
 
 // GetBook handler to fetch a single book by ID
-func GetBook(appState *model.AppState) http.HandlerFunc {
+func GetBook(server *model.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		vars := mux.Vars(r)
 		bookID := vars["id"]
 
-		row := appState.DB.QueryRowContext(ctx, "SELECT id, title, author FROM books WHERE id = ?", bookID)
+		row := server.DB.QueryRowContext(ctx, "SELECT id, title, author FROM books WHERE id = ?", bookID)
 
 		var book model.Book
 		err := row.Scan(&book.ID, &book.Title, &book.Author)
@@ -98,7 +98,7 @@ func GetBook(appState *model.AppState) http.HandlerFunc {
 }
 
 // UpdateBook updates a book by ID (PUT /books/{id})
-func UpdateBook(appState *model.AppState) http.HandlerFunc {
+func UpdateBook(server *model.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		ctx := r.Context()
@@ -115,7 +115,7 @@ func UpdateBook(appState *model.AppState) http.HandlerFunc {
 
 		updatedBook.ID = bookID
 
-		_, err = appState.DB.ExecContext(ctx,
+		_, err = server.DB.ExecContext(ctx,
 			"UPDATE books SET title = ?, author = ? WHERE id = ?",
 			updatedBook.Title, updatedBook.Author, bookID,
 		)
@@ -125,7 +125,7 @@ func UpdateBook(appState *model.AppState) http.HandlerFunc {
 			return
 		}
 
-		result, err := appState.DB.Exec("SELECT changes()")
+		result, err := server.DB.Exec("SELECT changes()")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("Error checking update result"))
@@ -144,14 +144,14 @@ func UpdateBook(appState *model.AppState) http.HandlerFunc {
 }
 
 // DeleteBook deletes a book by ID (DELETE /books/{id})
-func DeleteBook(appState *model.AppState) http.HandlerFunc {
+func DeleteBook(server *model.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		ctx := r.Context()
 		vars := mux.Vars(r)
 		bookID := vars["id"]
 
-		result, err := appState.DB.ExecContext(ctx, "DELETE FROM books WHERE id = ?", bookID)
+		result, err := server.DB.ExecContext(ctx, "DELETE FROM books WHERE id = ?", bookID)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "Error deleting book: %v", err)
